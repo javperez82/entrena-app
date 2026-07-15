@@ -427,10 +427,20 @@ async function boot(){
       $('#login-btn').onclick = async () => {
         const email = $('#login-email').value.trim();
         if (!email) return;
-        const { error } = await supa.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
-        $('#login-msg').textContent = error ? 'Error: ' + error.message : 'Enlace enviado. Revisa tu correo y ábrelo desde este dispositivo.';
+        const { error } = await supa.auth.signInWithOtp({ email });
+        if (error){ $('#login-msg').textContent = 'Error: ' + error.message; return; }
+        $('#code-step').style.display = 'block';
+        $('#login-msg').textContent = 'Código enviado. Revisa tu correo (y spam) y escríbelo aquí.';
+        $('#login-code').focus();
       };
-      supa.auth.onAuthStateChange((_e, s) => { if (s) location.reload(); });
+      $('#code-btn').onclick = async () => {
+        const email = $('#login-email').value.trim();
+        const token = $('#login-code').value.trim();
+        if (token.length !== 6) return ($('#login-msg').textContent = 'El código tiene 6 dígitos.');
+        const { error } = await supa.auth.verifyOtp({ email, token, type: 'email' });
+        if (error){ $('#login-msg').textContent = 'Código inválido o vencido. Pide uno nuevo.'; return; }
+        location.reload();
+      };
       return;
     }
   } else {
