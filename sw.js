@@ -1,5 +1,5 @@
 // Service worker: cache-first para funcionar sin señal en el gym
-const CACHE = 'entrena-v2';
+const CACHE = 'entrena-v3';
 const CORE = ['./', './index.html', './app.js', './data.js', './manifest.json'];
 
 self.addEventListener('install', e => {

@@ -426,21 +426,14 @@ async function boot(){
       $('#login').style.display = 'block';
       $('#login-btn').onclick = async () => {
         const email = $('#login-email').value.trim();
-        if (!email) return;
-        const { error } = await supa.auth.signInWithOtp({ email });
-        if (error){ $('#login-msg').textContent = 'Error: ' + error.message; return; }
-        $('#code-step').style.display = 'block';
-        $('#login-msg').textContent = 'Código enviado. Revisa tu correo (y spam) y escríbelo aquí.';
-        $('#login-code').focus();
-      };
-      $('#code-btn').onclick = async () => {
-        const email = $('#login-email').value.trim();
-        const token = $('#login-code').value.trim();
-        if (token.length !== 6) return ($('#login-msg').textContent = 'El código tiene 6 dígitos.');
-        const { error } = await supa.auth.verifyOtp({ email, token, type: 'email' });
-        if (error){ $('#login-msg').textContent = 'Código inválido o vencido. Pide uno nuevo.'; return; }
+        const password = $('#login-pass').value;
+        if (!email || !password) return ($('#login-msg').textContent = 'Escribe correo y contraseña.');
+        $('#login-msg').textContent = 'Entrando…';
+        const { error } = await supa.auth.signInWithPassword({ email, password });
+        if (error){ $('#login-msg').textContent = 'Correo o contraseña incorrectos.'; return; }
         location.reload();
       };
+      $('#login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') $('#login-btn').click(); });
       return;
     }
   } else {
