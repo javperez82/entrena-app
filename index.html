@@ -132,9 +132,13 @@ canvas{max-width:100%}
 
 <div id="login" style="display:none">
   <h2 style="margin-bottom:8px">Entrar</h2>
-  <p class="muted" style="margin-bottom:16px">Te enviamos un enlace mágico a tu correo. Sin contraseñas.</p>
+  <p class="muted" style="margin-bottom:16px">Te enviamos un código de 6 dígitos a tu correo. Sin contraseñas.</p>
   <input type="email" id="login-email" placeholder="tu@correo.com" style="margin-bottom:10px">
-  <button class="btn" id="login-btn">Enviar enlace</button>
+  <button class="btn" id="login-btn">Enviar código</button>
+  <div id="code-step" style="display:none;margin-top:14px">
+    <input type="text" id="login-code" inputmode="numeric" maxlength="6" placeholder="Código de 6 dígitos" style="margin-bottom:10px;text-align:center;letter-spacing:.3em;font-size:1.2rem">
+    <button class="btn" id="code-btn">Verificar y entrar</button>
+  </div>
   <p class="muted" id="login-msg" style="margin-top:12px"></p>
 </div>
 
