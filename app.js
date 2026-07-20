@@ -33,7 +33,23 @@ const SupaDB = {
 let DB = LocalDB;
 
 // ---------- estado ----------
-const S = { sesionActiva: null, series: [], jornada: null, semana: 1, charts: {} };
+const S = {
+  sesionActiva: null, series: [], jornada: null, semana: 1, charts: {},
+  swapsSesion: {}, // cambios de ejercicio SOLO para la sesión activa (no se guardan)
+  unidadPeso: localStorage.getItem('entrena_unidad_peso') || 'kg',
+};
+
+// ---------- conversión kg / lb (solo para captura; todo se guarda en kg) ----------
+const KG_A_LB = 2.20462;
+function pesoDisplay(kg){
+  if (kg == null || kg === '') return '';
+  return S.unidadPeso === 'lb' ? Math.round(kg * KG_A_LB * 2) / 2 : kg;
+}
+function pesoAKg(valorInput){
+  const v = parseFloat(valorInput);
+  if (isNaN(v)) return NaN;
+  return S.unidadPeso === 'lb' ? Math.round((v / KG_A_LB) * 2) / 2 : v;
+}
 
 // ---------- semana del programa ----------
 function inicioPrograma(){
@@ -50,10 +66,63 @@ function semanaActual(){
   return Math.min(Math.max(Math.floor(dias / 7) + 1, 1), 4);
 }
 
+// ---------- calendario semanal (días de gym configurables, 1-7 por semana) ----------
+const ROTACION_JORNADAS = ['torso_a', 'pierna_a', 'torso_b', 'pierna_b'];
+
+function mondayOf(fechaISO){
+  const d = new Date(fechaISO);
+  const off = (d.getDay() + 6) % 7; // lunes=0
+  d.setDate(d.getDate() - off);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function diasSemana(monday){
+  const v = localStorage.getItem('entrena_dias_' + monday);
+  return v ? Math.min(Math.max(parseInt(v), 1), 7) : 4;
+}
+function setDiasSemana(monday, n){
+  localStorage.setItem('entrena_dias_' + monday, String(Math.min(Math.max(n, 1), 7)));
+}
+// Reparte N días de gym a lo largo de la semana (lun=1..dom=7) y asigna la
+// jornada en rotación continua (torso_a→pierna_a→torso_b→pierna_b→torso_a…),
+// así dos días de gym seguidos nunca caen en la misma jornada.
+// Calendario original de Javier (4 días): lun torso_a, mar pierna_a, mié caminata,
+// jue torso_b, vie pierna_b, sáb caminata, dom descanso. Se preserva tal cual
+// cuando elige 4 días, que es el caso de siempre.
+const CALENDARIO_4 = { 1: 'torso_a', 2: 'pierna_a', 3: 'caminata', 4: 'torso_b', 5: 'pierna_b', 6: 'caminata', 7: 'descanso' };
+
+function calendarioSemana(monday){
+  const n = diasSemana(monday);
+  if (n === 4) return CALENDARIO_4;
+  const posiciones = [];
+  for (let i = 0; i < n; i++){
+    let pos = Math.round((i + 0.5) * 7 / n);
+    pos = Math.min(Math.max(pos, 1), 7);
+    while (posiciones.includes(pos) && pos < 7) pos++;
+    posiciones.push(pos);
+  }
+  const cal = {};
+  let idx = 0;
+  for (let pos = 1; pos <= 7; pos++){
+    if (posiciones.includes(pos)){ cal[pos] = ROTACION_JORNADAS[idx % 4]; idx++; }
+  }
+  const libres = [1,2,3,4,5,6,7].filter(p => !cal[p]);
+  libres.forEach((p, i) => { cal[p] = (i === libres.length - 1) ? 'descanso' : 'caminata'; });
+  return cal;
+}
+function jornadaDelDia(fechaISO){
+  const override = localStorage.getItem('entrena_override_' + fechaISO);
+  if (override) return override;
+  const cal = calendarioSemana(mondayOf(fechaISO));
+  const d = new Date(fechaISO);
+  const pos = ((d.getDay() + 6) % 7) + 1;
+  return cal[pos];
+}
+
 // ---------- vistas ----------
 $$('nav.tabs button').forEach(b => b.onclick = () => {
   $$('nav.tabs button').forEach(x => x.classList.toggle('on', x === b));
   $$('.view').forEach(v => v.classList.toggle('on', v.id === 'view-' + b.dataset.view));
+  if (b.dataset.view === 'hoy') renderResumenHoy();
   if (b.dataset.view === 'progreso') renderProgreso();
   if (b.dataset.view === 'meds') renderMeds();
   if (b.dataset.view === 'mente') renderMente();
@@ -70,7 +139,15 @@ async function renderHoy(){
   $('#semana-tag').textContent = `Semana ${S.semana} · ${sem.titulo}`;
   $('#semana-tip').innerHTML = `<p class="muted"><b style="color:var(--amber)">${esc(sem.rir)}.</b> ${esc(sem.tip)}</p>`;
 
-  let tipo = localStorage.getItem('entrena_override_' + hoyISO()) || CALENDARIO[fecha.getDay()];
+  const monday = mondayOf(hoyISO());
+  const n = diasSemana(monday);
+  $('#dias-semana-info').textContent = `${n} día${n === 1 ? '' : 's'}`;
+  $('#dias-menos').onclick = () => { setDiasSemana(monday, diasSemana(monday) - 1); renderHoy(); };
+  $('#dias-mas').onclick = () => { setDiasSemana(monday, diasSemana(monday) + 1); renderHoy(); };
+
+  renderResumenHoy();
+
+  let tipo = jornadaDelDia(hoyISO());
   S.jornada = tipo;
 
   const zona = $('#sesion-zona');
@@ -107,12 +184,36 @@ async function renderHoy(){
       $('#iniciar').onclick = async () => {
         S.sesionActiva = await DB.insert('sesiones', { fecha: hoyISO(), dia: tipo, semana: S.semana, completada: false });
         S.series = [];
+        S.swapsSesion = {};
         renderSesion(plan);
       };
     }
   }
   const js = $('#jornada-select');
   if (js) js.onchange = e => { localStorage.setItem('entrena_override_' + hoyISO(), e.target.value); renderHoy(); };
+}
+
+async function renderResumenHoy(){
+  const tomas = await DB.list('tomas', { fecha: hoyISO() });
+  const iny = await DB.list('inyecciones');
+  const inyPendientes = INYECTABLES.filter(x => {
+    const ultimas = iny.filter(i => i.tipo === x.id).sort((a,b) => a.fecha.localeCompare(b.fecha));
+    const ult = ultimas[ultimas.length - 1];
+    const dias = ult ? Math.floor((new Date(hoyISO()) - new Date(ult.fecha)) / 864e5) : null;
+    return dias !== null && dias >= x.cadaDias;
+  }).length;
+  const medit = await DB.list('meditaciones', { fecha: hoyISO() });
+  const minMedit = Math.round(medit.reduce((a, s) => a + (s.minutos || 0), 0));
+
+  const zona = $('#resumen-hoy');
+  if (!zona) return;
+  zona.innerHTML = `
+    <div class="eyebrow">Resumen de hoy</div>
+    <div class="resumen-grid" style="margin-top:8px">
+      <div class="stat"><div class="v">${tomas.length}/${MEDS_DIARIOS.length}</div><div class="l">meds</div></div>
+      <div class="stat"><div class="v" style="${inyPendientes ? 'color:var(--amber)' : ''}">${inyPendientes}</div><div class="l">iny. pendiente</div></div>
+      <div class="stat"><div class="v">${minMedit}</div><div class="l">min. mente</div></div>
+    </div>`;
 }
 
 function setRing(done, total){
@@ -140,10 +241,17 @@ async function ultimaCarga(slug){
 async function renderSesion(plan){
   const zona = $('#sesion-zona');
   const swaps = JSON.parse(localStorage.getItem('entrena_swaps') || '{}');
-  let html = '';
+  const u = S.unidadPeso;
+  let html = `<div class="row unidad-toggle" style="margin-bottom:12px">
+    <button class="btn sec mini ${u==='kg'?'on':''}" id="u-kg">kg</button>
+    <button class="btn sec mini ${u==='lb'?'on':''}" id="u-lb">lb</button>
+  </div>`;
   for (const ej of plan.ejercicios){
-    const slug = swaps[ej.slug] || ej.slug;
+    // slug real: primero cambio de ESTA sesión (temporal), luego el swap persistente (goblet/barra), si no el original
+    const slugBase = swaps[ej.slug] || ej.slug;
+    const slug = S.swapsSesion[ej.slug] || slugBase;
     const info = EJERCICIOS[slug];
+    const sustituido = !!S.swapsSesion[ej.slug];
     const nSeries = seriesDelPlan(ej);
     const hechas = S.series.filter(s => s.ejercicio === slug);
     const done = hechas.length >= nSeries;
@@ -152,29 +260,34 @@ async function renderSesion(plan){
     let rows = '';
     for (let i = 1; i <= nSeries; i++){
       const h = hechas[i-1];
+      const valorMostrado = h ? pesoDisplay(h.peso) : (prev ? pesoDisplay(prev.peso) : '');
       rows += `<div class="serie-row" data-slug="${slug}" data-n="${i}">
         <div class="n">${i}</div>
-        <input type="number" step="0.5" inputmode="decimal" placeholder="kg" value="${h ? h.peso : (prev ? prev.peso : '')}" ${h?'disabled':''} class="in-peso">
+        <input type="number" step="0.5" inputmode="decimal" placeholder="${u}" value="${valorMostrado}" ${h?'disabled':''} class="in-peso">
         <input type="number" inputmode="numeric" placeholder="${ej.reps[0]}-${ej.reps[1]} ${unidad}" value="${h ? h.reps : ''}" ${h?'disabled':''} class="in-reps">
         <button class="ok ${h?'on':''}" ${h?'disabled':''} aria-label="Marcar serie">✓</button>
       </div>`;
     }
-    html += `<div class="ej ${done?'done':''} ${!done?'':''}" id="ej-${ej.slug}">
+    html += `<div class="ej ${done?'done':''}" id="ej-${ej.slug}">
       <div class="ej-head" data-toggle="${ej.slug}">
         <img class="ej-img" src="img/${slug}_0.jpg" alt="${esc(info.es)}" data-imgs="img/${slug}_0.jpg,img/${slug}_1.jpg" loading="lazy">
-        <div class="ej-tit"><h3>${esc(info.es)}</h3><span class="muted">${nSeries} × ${ej.reps[0]}${ej.reps[1]!==ej.reps[0] ? '–'+ej.reps[1] : ''} ${unidad}${info.porLado ? ' por pierna' : ''}</span></div>
+        <div class="ej-tit"><h3>${esc(info.es)}</h3><span class="muted">${nSeries} × ${ej.reps[0]}${ej.reps[1]!==ej.reps[0] ? '–'+ej.reps[1] : ''} ${unidad}${info.porLado ? ' por pierna' : ''}</span>${sustituido ? '<span class="pill warn" style="margin-left:6px">sustituido</span>' : ''}</div>
         <button class="ej-check" aria-label="Ejercicio completo">✓</button>
       </div>
       <div class="ej-body">
-        ${prev ? `<div class="prev">Última vez: ${prev.peso} kg × ${prev.reps}</div>` : ''}
+        ${prev ? `<div class="prev">Última vez: ${pesoDisplay(prev.peso)} ${u} × ${prev.reps}</div>` : ''}
         <p class="ej-nota">${esc(info.nota)}</p>
         ${info.alt ? `<button class="btn sec mini" style="margin-bottom:10px" data-swap="${ej.slug}" data-to="${swaps[ej.slug] ? '' : info.alt}">${swaps[ej.slug] ? 'Volver a goblet' : 'Usar barra (sem. 3+)'}</button>` : ''}
+        <select class="swap-select" data-orig="${ej.slug}">
+          <option value="">${sustituido ? '↺ Volver a ' + esc(EJERCICIOS[slugBase].es) : 'Sin aparato: cambiar ejercicio…'}</option>
+          ${Object.entries(EJERCICIOS).filter(([k]) => k !== slugBase).map(([k,v]) => `<option value="${k}" ${S.swapsSesion[ej.slug]===k?'selected':''}>${esc(v.es)}</option>`).join('')}
+        </select>
         ${rows}
       </div>
     </div>`;
   }
   const totalDone = plan.ejercicios.filter(ej => {
-    const slug = swaps[ej.slug] || ej.slug;
+    const slug = S.swapsSesion[ej.slug] || swaps[ej.slug] || ej.slug;
     return S.series.filter(s => s.ejercicio === slug).length >= seriesDelPlan(ej);
   }).length;
   const fin = totalDone === plan.ejercicios.length;
@@ -183,14 +296,20 @@ async function renderSesion(plan){
   setRing(totalDone, plan.ejercicios.length);
 
   // interacciones
-  $$('.ej-head').forEach(h => h.onclick = e => { if (e.target.closest('.ej-check')) return; h.closest('.ej').classList.toggle('open'); });
+  $$('.ej-head').forEach(h => h.onclick = e => { if (e.target.closest('.ej-check') || e.target.closest('.ej-img')) return; h.closest('.ej').classList.toggle('open'); });
+  // ampliar imagen al tocarla
+  $$('.ej-img').forEach(img => img.onclick = e => { e.stopPropagation(); openLightbox(img.dataset.imgs.split(','), img.alt); });
   // alternar imagen inicio/fin del movimiento (limpiando intervalos previos)
   (S.imgTimers || []).forEach(clearInterval);
   S.imgTimers = $$('.ej-img').map(img => { let i = 0; const srcs = img.dataset.imgs.split(','); return setInterval(() => { i = 1 - i; img.src = srcs[i]; }, 1400); });
-  // marcar serie
+  // unidad kg/lb
+  const ukg = $('#u-kg'), ulb = $('#u-lb');
+  if (ukg) ukg.onclick = () => { S.unidadPeso = 'kg'; localStorage.setItem('entrena_unidad_peso', 'kg'); renderSesion(plan); };
+  if (ulb) ulb.onclick = () => { S.unidadPeso = 'lb'; localStorage.setItem('entrena_unidad_peso', 'lb'); renderSesion(plan); };
+  // marcar serie (convierte a kg antes de guardar, sin importar la unidad mostrada)
   $$('.serie-row .ok:not(.on)').forEach(btn => btn.onclick = async () => {
     const row = btn.closest('.serie-row');
-    const peso = parseFloat(row.querySelector('.in-peso').value);
+    const peso = pesoAKg(row.querySelector('.in-peso').value);
     const reps = parseInt(row.querySelector('.in-reps').value);
     if (isNaN(peso) || isNaN(reps)) return toast('Anota peso y repeticiones');
     await DB.insert('series', { sesion_id: S.sesionActiva.id, ejercicio: row.dataset.slug, serie: +row.dataset.n, peso, reps });
@@ -199,11 +318,17 @@ async function renderSesion(plan){
   });
   // check ejercicio completo (marca las series restantes con lo escrito)
   $$('.ej-check').forEach(btn => btn.onclick = e => e.stopPropagation());
-  // cambiar goblet ↔ barra
+  // cambiar goblet ↔ barra (persistente, progresión de técnica)
   $$('[data-swap]').forEach(btn => btn.onclick = () => {
     const sw = JSON.parse(localStorage.getItem('entrena_swaps') || '{}');
     if (btn.dataset.to) sw[btn.dataset.swap] = btn.dataset.to; else delete sw[btn.dataset.swap];
     localStorage.setItem('entrena_swaps', JSON.stringify(sw));
+    renderSesion(plan);
+  });
+  // cambiar ejercicio SOLO por esta sesión (sin aparato disponible)
+  $$('.swap-select').forEach(sel => sel.onchange = () => {
+    const orig = sel.dataset.orig;
+    if (sel.value) S.swapsSesion[orig] = sel.value; else delete S.swapsSesion[orig];
     renderSesion(plan);
   });
   const t = $('#terminar');
@@ -215,6 +340,23 @@ async function renderSesion(plan){
   };
 }
 
+// ---------- lightbox de imágenes ----------
+let lbTimer = null;
+function openLightbox(srcs, alt){
+  const img = $('#lightbox-img');
+  let i = 0;
+  img.src = srcs[0]; img.alt = alt;
+  $('#img-lightbox').classList.add('on');
+  clearInterval(lbTimer);
+  lbTimer = setInterval(() => { i = 1 - i; img.src = srcs[i]; }, 1400);
+}
+function closeLightbox(){
+  $('#img-lightbox').classList.remove('on');
+  clearInterval(lbTimer);
+}
+$('#lightbox-close').onclick = closeLightbox;
+$('#img-lightbox').onclick = e => { if (e.target.id === 'img-lightbox') closeLightbox(); };
+
 // ============================================================
 // PROGRESO
 // ============================================================
@@ -222,6 +364,7 @@ async function renderProgreso(){
   const mets = (await DB.list('metricas')).sort((a,b) => a.fecha.localeCompare(b.fecha));
   const sesiones = await DB.list('sesiones');
   const gym = sesiones.filter(s => s.dia !== 'caminata' && s.completada);
+  renderRacha(sesiones);
 
   // stats
   const ult = mets[mets.length - 1];
@@ -258,6 +401,20 @@ async function renderProgreso(){
     labels: pts.map(p => p.f.slice(5)),
     datasets: [{ label: 'Mejor serie (kg)', data: pts.map(p => p.peso), borderColor: '#3EDD9B', backgroundColor: 'rgba(62,221,155,.12)', fill: true, tension: .25 }]
   });
+}
+
+function renderRacha(sesiones){
+  const monday = mondayOf(hoyISO());
+  const letras = ['L','M','X','J','V','S','D'];
+  let html = '';
+  for (let i = 0; i < 7; i++){
+    const d = new Date(monday); d.setDate(d.getDate() + i);
+    const iso = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const hecha = sesiones.some(s => s.fecha === iso && s.completada && s.dia !== 'caminata');
+    const esHoy = iso === hoyISO();
+    html += `<div class="racha-box ${hecha?'on':''} ${esHoy?'hoy':''}">${letras[i]}</div>`;
+  }
+  $('#racha-semana').innerHTML = html;
 }
 
 function drawChart(key, canvas, data){
@@ -426,14 +583,11 @@ async function boot(){
       $('#login').style.display = 'block';
       $('#login-btn').onclick = async () => {
         const email = $('#login-email').value.trim();
-        const password = $('#login-pass').value;
-        if (!email || !password) return ($('#login-msg').textContent = 'Escribe correo y contraseña.');
-        $('#login-msg').textContent = 'Entrando…';
-        const { error } = await supa.auth.signInWithPassword({ email, password });
-        if (error){ $('#login-msg').textContent = 'Correo o contraseña incorrectos.'; return; }
-        location.reload();
+        if (!email) return;
+        const { error } = await supa.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+        $('#login-msg').textContent = error ? 'Error: ' + error.message : 'Enlace enviado. Revisa tu correo y ábrelo desde este dispositivo.';
       };
-      $('#login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') $('#login-btn').click(); });
+      supa.auth.onAuthStateChange((_e, s) => { if (s) location.reload(); });
       return;
     }
   } else {

@@ -115,6 +115,33 @@ canvas{max-width:100%}
 .row{display:flex;gap:10px}
 .row>*{flex:1}
 .spacer{height:8px}
+
+/* Resumen del día */
+.resumen-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+
+/* Racha semanal */
+.racha-row{display:flex;gap:6px;margin-top:8px}
+.racha-box{flex:1;aspect-ratio:1;border-radius:8px;background:var(--surface2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:800;font-size:.72rem;color:var(--muted)}
+.racha-box.on{background:var(--accent);border-color:var(--accent);color:#06281C}
+.racha-box.hoy{outline:2px solid var(--amber);outline-offset:1px}
+
+/* Stepper de días por semana */
+.stepper{display:flex;align-items:center;gap:10px}
+.stepper button{width:36px;height:36px;border-radius:50%;background:var(--surface2);border:1px solid var(--line);color:var(--text);font-size:1.1rem;font-weight:800}
+.stepper .n{font-family:var(--display);font-weight:800;font-size:1.1rem;min-width:60px;text-align:center}
+
+/* Cambiar ejercicio (swap por sesión) */
+select.swap-select{margin-bottom:10px}
+
+/* Unidad kg/lb */
+.unidad-toggle button{flex:1}
+.unidad-toggle button.on{background:var(--accent);color:#06281C}
+
+/* Lightbox de imágenes */
+.lightbox{position:fixed;inset:0;background:rgba(6,10,11,.94);display:none;align-items:center;justify-content:center;z-index:200;padding:20px}
+.lightbox.on{display:flex}
+.lightbox img{max-width:92vw;max-height:78vh;border-radius:14px;background:#fff;object-fit:contain}
+.lightbox-close{position:absolute;top:calc(16px + env(safe-area-inset-top));right:16px;width:40px;height:40px;border-radius:50%;background:var(--surface2);border:1px solid var(--line);color:var(--text);font-size:1.2rem}
 .toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:var(--surface2);border:1px solid var(--accent);color:var(--text);padding:10px 18px;border-radius:99px;font-size:.85rem;z-index:99;opacity:0;transition:opacity .25s}
 .toast.show{opacity:1}
 #login{max-width:400px;margin:14vh auto;padding:0 20px;text-align:center}
@@ -132,10 +159,9 @@ canvas{max-width:100%}
 
 <div id="login" style="display:none">
   <h2 style="margin-bottom:8px">Entrar</h2>
-  <p class="muted" style="margin-bottom:16px">Tu correo y contraseña. La sesión queda guardada: esto se hace una sola vez.</p>
-  <input type="email" id="login-email" placeholder="tu@correo.com" style="margin-bottom:10px" autocomplete="username">
-  <input type="password" id="login-pass" placeholder="Contraseña" style="margin-bottom:10px" autocomplete="current-password">
-  <button class="btn" id="login-btn">Entrar</button>
+  <p class="muted" style="margin-bottom:16px">Te enviamos un enlace mágico a tu correo. Sin contraseñas.</p>
+  <input type="email" id="login-email" placeholder="tu@correo.com" style="margin-bottom:10px">
+  <button class="btn" id="login-btn">Enviar enlace</button>
   <p class="muted" id="login-msg" style="margin-top:12px"></p>
 </div>
 
@@ -143,6 +169,7 @@ canvas{max-width:100%}
 
   <!-- ===== HOY ===== -->
   <section class="view" id="view-hoy">
+    <div class="card" id="resumen-hoy"></div>
     <div class="card">
       <div class="ring-wrap">
         <div class="ring">
@@ -157,6 +184,16 @@ canvas{max-width:100%}
       </div>
     </div>
     <div class="card flat" id="semana-tip"><p class="muted">—</p></div>
+    <div class="card flat" style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <label style="margin-bottom:2px">Días de gym esta semana</label>
+        <div class="eyebrow" id="dias-semana-info" style="color:var(--text)">4 días</div>
+      </div>
+      <div class="stepper">
+        <button id="dias-menos" aria-label="Menos días">−</button>
+        <button id="dias-mas" aria-label="Más días">+</button>
+      </div>
+    </div>
     <div id="sesion-zona"></div>
   </section>
 
@@ -179,6 +216,10 @@ canvas{max-width:100%}
     </div>
     <div class="card">
       <div class="metric-grid" id="stats-zona"></div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Racha de esta semana</div>
+      <div class="racha-row" id="racha-semana"></div>
     </div>
     <div class="card"><h2 style="margin-bottom:10px">Peso y cintura</h2><canvas id="chart-cuerpo" height="200"></canvas></div>
     <div class="card">
@@ -252,6 +293,11 @@ canvas{max-width:100%}
 </nav>
 
 <div class="toast" id="toast"></div>
+
+<div class="lightbox" id="img-lightbox">
+  <button class="lightbox-close" id="lightbox-close" aria-label="Cerrar">✕</button>
+  <img id="lightbox-img" alt="">
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
